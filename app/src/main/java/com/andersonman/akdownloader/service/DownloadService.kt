@@ -22,7 +22,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -106,26 +105,25 @@ class DownloadService : Service() {
         var latestTotal = probe.totalBytes
         try {
             val pfd = resolver.openFileDescriptor(uri, "rw")
-                ?: throw IllegalStateException("Flux de stockage indisponible")
-            try {
-                val progressJob = scope.launch {
-                    while (isActive) {
-                        delay(PROGRESS_INTERVAL_MS)
-                        dao.updateProgress(id, latestBytes, latestTotal)
-                        notifyProgress(displayName, id, latestBytes, latestTotal)
-                    }
+            if (pfd == null) {
+                throw IllegalStateException("Flux de stockage indisponible")
+            }
+            val raf = RandomAccessFile(pfd.fileDescriptor, "rw")
+            val progressJob = scope.launch {
+                while (true) {
+                    delay(PROGRESS_INTERVAL_MS)
+                    dao.updateProgress(id, latestBytes, latestTotal)
+                    notifyProgress(displayName, id, latestBytes, latestTotal)
                 }
-                try {
-                    RandomAccessFile(pfd.fileDescriptor, "rw").use { raf ->
-                        downloader.download(entity.url, raf) { bytesRead, totalBytes ->
-                            latestBytes = bytesRead
-                            latestTotal = totalBytes
-                        }
-                    }
-                } finally {
-                    progressJob.cancel()
+            }
+            try {
+                downloader.download(entity.url, raf) { bytesRead, totalBytes ->
+                    latestBytes = bytesRead
+                    latestTotal = totalBytes
                 }
             } finally {
+                progressJob.cancel()
+                raf.close()
                 pfd.close()
             }
 
