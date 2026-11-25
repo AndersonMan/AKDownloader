@@ -32,11 +32,16 @@ jobs:
               -alias androiddebugkey -storepass android -keypass android \
               -dname "CN=AKDownloader Debug, O=AKDownloader, C=FR" \
               -keyalg RSA -keysize 2048 -validity 10000
+            TARGET="${{ github.head_ref }}"
+            if [ -n "$TARGET" ]; then
+              git fetch origin "$TARGET"
+              git checkout -B "$TARGET" "origin/$TARGET"
+            fi
             git config user.name "github-actions"
             git config user.email "actions@github.com"
             git add debug.keystore
             git commit -m "Ajout de la clé de signature debug stable"
-            git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" "HEAD:${{ github.head_ref }}"
+            git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" "HEAD:${TARGET:-main}"
           fi
 
       - name: Build debug APK
