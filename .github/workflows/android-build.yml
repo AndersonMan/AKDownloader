@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -21,6 +24,20 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+
+      - name: Create stable debug keystore (first run only)
+        run: |
+          if [ ! -f debug.keystore ]; then
+            keytool -genkeypair -keystore debug.keystore \
+              -alias androiddebugkey -storepass android -keypass android \
+              -dname "CN=AKDownloader Debug, O=AKDownloader, C=FR" \
+              -keyalg RSA -keysize 2048 -validity 10000
+            git config user.name "github-actions"
+            git config user.email "actions@github.com"
+            git add debug.keystore
+            git commit -m "Ajout de la clé de signature debug stable"
+            git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" "HEAD:${{ github.head_ref }}"
+          fi
 
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon
