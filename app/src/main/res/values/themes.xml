@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.AKDownloader" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@color/ak_background</item>
+        <item name="android:navigationBarColor">@color/ak_background</item>
+        <item name="android:windowBackground">@color/ak_background</item>
+    </style>
+</resources>
