@@ -20,6 +20,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -99,21 +102,34 @@ class DownloadService : Service() {
             return
         }
 
-        var lastUpdate = 0L
+        var latestBytes = 0L
+        var latestTotal = probe.totalBytes
         try {
-            resolver.openFileDescriptor(uri, "rw")?.use { pfd ->
-                RandomAccessFile(pfd.fileDescriptor, "rw").use { raf ->
-                    downloader.download(entity.url, raf) { bytesRead, totalBytes ->
-                        val now = System.currentTimeMillis()
-                        if (now - lastUpdate > PROGRESS_INTERVAL_MS) {
-                            lastUpdate = now
-                            updateProgress(id, bytesRead, totalBytes, displayName)
-                        }
+            val pfd = resolver.openFileDescriptor(uri, "rw")
+                ?: throw IllegalStateException("Flux de stockage indisponible")
+            try {
+                val progressJob = scope.launch {
+                    while (isActive) {
+                        delay(PROGRESS_INTERVAL_MS)
+                        dao.updateProgress(id, latestBytes, latestTotal)
+                        notifyProgress(displayName, id, latestBytes, latestTotal)
                     }
                 }
-            } ?: throw IllegalStateException("Flux de stockage indisponible")
+                try {
+                    RandomAccessFile(pfd.fileDescriptor, "rw").use { raf ->
+                        downloader.download(entity.url, raf) { bytesRead, totalBytes ->
+                            latestBytes = bytesRead
+                            latestTotal = totalBytes
+                        }
+                    }
+                } finally {
+                    progressJob.cancel()
+                }
+            } finally {
+                pfd.close()
+            }
 
-            val total = if (probe.totalBytes > 0) probe.totalBytes else -1L
+            val total = latestTotal.takeIf { it > 0 } ?: -1L
             dao.markCompleted(id, uri.toString(), total, System.currentTimeMillis())
             resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
             notifyFinished(displayName, id, success = true)
@@ -128,8 +144,7 @@ class DownloadService : Service() {
         }
     }
 
-    private suspend fun updateProgress(id: Long, bytesRead: Long, totalBytes: Long, displayName: String) {
-        dao.updateProgress(id, bytesRead, totalBytes)
+    private fun notifyProgress(displayName: String, id: Long, bytesRead: Long, totalBytes: Long) {
         val percent = if (totalBytes > 0) ((bytesRead * 100) / totalBytes).toInt() else 0
         val notification = NotificationCompat.Builder(this, AKDownloaderApp.CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
