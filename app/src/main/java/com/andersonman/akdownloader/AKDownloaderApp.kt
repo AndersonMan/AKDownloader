@@ -7,6 +7,7 @@ import androidx.room.Room
 import com.andersonman.akdownloader.data.db.AppDatabase
 import com.andersonman.akdownloader.data.net.SegmentedDownloader
 import com.andersonman.akdownloader.data.repo.DownloadRepository
+import com.andersonman.akdownloader.ui.crash.CrashReporter
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -38,6 +39,7 @@ class AKDownloaderApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        CrashReporter.install(this)
         val channel = NotificationChannel(
             CHANNEL_ID,
             "Téléchargements",
