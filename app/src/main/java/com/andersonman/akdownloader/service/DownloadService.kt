@@ -1,11 +1,11 @@
 package com.andersonman.akdownloader.service
 
-import android.app.Notification
 import android.app.Service
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.Uri
 import android.os.Environment
 import android.os.IBinder
 import android.provider.MediaStore
@@ -20,9 +20,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import java.io.File
 import java.io.RandomAccessFile
 import java.util.concurrent.ConcurrentHashMap
 
@@ -73,7 +76,7 @@ class DownloadService : Service() {
         if (entity.status == DownloadEntity.Status.COMPLETED.name) return
 
         dao.updateStatus(id, DownloadEntity.Status.RUNNING.name)
-        val context = applicationContext
+        val resolver = applicationContext.contentResolver
 
         val probe = try {
             downloader.probe(entity.url)
@@ -86,55 +89,72 @@ class DownloadService : Service() {
         val mime = probe.contentType?.substringBefore(';')?.trim()?.takeIf { it.isNotBlank() }
             ?: entity.mimeType.ifBlank { "application/octet-stream" }
 
-        val resolver = context.contentResolver
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
-            put(MediaStore.MediaColumns.MIME_TYPE, mime)
-            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/AKDownloader")
-            put(MediaStore.MediaColumns.IS_PENDING, 1)
-        }
-        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-        if (uri == null) {
-            dao.updateError(id, DownloadEntity.Status.FAILED.name, "Impossible de créer le fichier")
-            return
-        }
-
-        var lastUpdate = 0L
+        val cacheFile = File(cacheDir, "download_" + id + ".part")
+        var mediaUri: Uri? = null
         try {
-            resolver.openFileDescriptor(uri, "rw")?.use { pfd ->
-                RandomAccessFile(pfd.fileDescriptor, "rw").use { raf ->
-                    downloader.download(entity.url, raf) { bytesRead, totalBytes ->
-                        val now = System.currentTimeMillis()
-                        if (now - lastUpdate > PROGRESS_INTERVAL_MS) {
-                            lastUpdate = now
-                            updateProgress(id, bytesRead, totalBytes, displayName)
-                        }
+            var latestBytes = 0L
+            var latestTotal = probe.totalBytes
+            val raf = RandomAccessFile(cacheFile, "rw")
+            val progressJob = scope.launch {
+                while (true) {
+                    delay(PROGRESS_INTERVAL_MS)
+                    dao.updateProgress(id, latestBytes, latestTotal)
+                    notifyProgress(displayName, id, latestBytes, latestTotal)
+                }
+            }
+            try {
+                downloader.download(entity.url, raf) { bytesRead: Long, totalBytes: Long ->
+                    latestBytes = bytesRead
+                    latestTotal = totalBytes
+                }
+            } finally {
+                progressJob.cancel()
+                raf.close()
+            }
+
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+                put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/AKDownloader")
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: throw IllegalStateException("Impossible de créer le fichier final")
+            mediaUri = uri
+            val output = resolver.openOutputStream(uri)
+            if (output != null) {
+                output.use { stream ->
+                    cacheFile.inputStream().use { source ->
+                        source.copyTo(stream)
                     }
                 }
-            } ?: throw IllegalStateException("Flux de stockage indisponible")
-
-            val total = if (probe.totalBytes > 0) probe.totalBytes else -1L
-            dao.markCompleted(id, uri.toString(), total, System.currentTimeMillis())
+            } else {
+                throw IllegalStateException("Flux de stockage indisponible")
+            }
             resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+
+            val total = if (latestTotal > 0) latestTotal else cacheFile.length()
+            dao.markCompleted(id, uri.toString(), total, System.currentTimeMillis())
             notifyFinished(displayName, id, success = true)
         } catch (e: CancellationException) {
-            runCatching { resolver.delete(uri, null, null) }
+            mediaUri?.let { runCatching { resolver.delete(it, null, null) } }
             dao.updateError(id, DownloadEntity.Status.CANCELLED.name, "Annulé")
             throw e
         } catch (e: Exception) {
-            runCatching { resolver.delete(uri, null, null) }
+            mediaUri?.let { runCatching { resolver.delete(it, null, null) } }
             dao.updateError(id, DownloadEntity.Status.FAILED.name, e.message ?: "Erreur inconnue")
             notifyFinished(displayName, id, success = false, error = e.message)
+        } finally {
+            runCatching { cacheFile.delete() }
         }
     }
 
-    private suspend fun updateProgress(id: Long, bytesRead: Long, totalBytes: Long, displayName: String) {
-        dao.updateProgress(id, bytesRead, totalBytes)
+    private fun notifyProgress(displayName: String, id: Long, bytesRead: Long, totalBytes: Long) {
         val percent = if (totalBytes > 0) ((bytesRead * 100) / totalBytes).toInt() else 0
         val notification = NotificationCompat.Builder(this, AKDownloaderApp.CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(displayName)
-            .setContentText(if (totalBytes > 0) "$percent %" else "Téléchargement en cours…")
+            .setContentText(if (totalBytes > 0) percent.toString() + " %" else "Téléchargement en cours…")
             .setProgress(100, percent, totalBytes <= 0)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -146,7 +166,7 @@ class DownloadService : Service() {
         val notification = NotificationCompat.Builder(this, AKDownloaderApp.CHANNEL_ID)
             .setSmallIcon(if (success) android.R.drawable.stat_sys_download_done else android.R.drawable.stat_notify_error)
             .setContentTitle("AKDownloader")
-            .setContentText(if (success) "Terminé : $displayName" else "Échec : $displayName ($error)")
+            .setContentText(if (success) "Terminé : " + displayName else "Échec : " + displayName + " (" + error + ")")
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
             .build()
@@ -160,7 +180,7 @@ class DownloadService : Service() {
         val ext = mime?.let {
             android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(it)
         } ?: "bin"
-        return "$base.$ext"
+        return base + "." + ext
     }
 
     private fun goForeground() {
@@ -183,7 +203,7 @@ class DownloadService : Service() {
             val notification = NotificationCompat.Builder(this, AKDownloaderApp.CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_download)
                 .setContentTitle("AKDownloader")
-                .setContentText("$count téléchargement(s) en cours")
+                .setContentText(count.toString() + " téléchargement(s) en cours")
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .build()

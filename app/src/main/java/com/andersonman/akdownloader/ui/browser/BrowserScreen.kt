@@ -3,6 +3,7 @@ package com.andersonman.akdownloader.ui.browser
 import android.annotation.SuppressLint
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.Arrangement

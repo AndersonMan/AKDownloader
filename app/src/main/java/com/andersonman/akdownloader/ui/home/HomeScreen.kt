@@ -93,7 +93,8 @@ fun HomeScreen(
     }
 }
 
-(item: MediaItem, onDownload: () -> Unit) {
+@Composable
+private fun MediaResultRow(item: MediaItem, onDownload: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(12.dp),
