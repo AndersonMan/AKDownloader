@@ -21,7 +21,7 @@ object CrashReporter {
         }
     }
 
-    private fun saveCrash(context: Context, throwable: Throwable) {
+    fun saveCrash(context: Context, throwable: Throwable) {
         val stack = android.util.Log.getStackTraceString(throwable).take(12000)
         val text = buildString {
             append("AKDownloader — rapport de plantage\n")
@@ -32,6 +32,10 @@ object CrashReporter {
             append(" (Android ").append(android.os.Build.VERSION.RELEASE).append(")\n\n")
             append(stack)
         }
+        saveText(context, text)
+    }
+
+    fun saveText(context: Context, text: String) {
         val resolver = context.applicationContext.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, PREFIX + System.currentTimeMillis() + ".txt")
