@@ -36,6 +36,11 @@ object CrashReporter {
     }
 
     fun saveText(context: Context, text: String) {
+        val internal = File(context.applicationContext.filesDir, "last_crash.txt")
+        runCatching {
+            internal.parentFile?.mkdirs()
+            internal.writeText(text)
+        }
         val resolver = context.applicationContext.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, PREFIX + System.currentTimeMillis() + ".txt")
@@ -58,6 +63,11 @@ object CrashReporter {
     }
 
     fun readLastCrash(context: Context): Pair<String, String>? {
+        val internal = File(context.applicationContext.filesDir, "last_crash.txt")
+        if (internal.exists()) {
+            val text = runCatching { internal.readText() }.getOrNull()
+            if (!text.isNullOrBlank()) return "last_crash.txt" to text.take(4000)
+        }
         return runCatching {
             val resolver = context.applicationContext.contentResolver
             val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
@@ -105,6 +115,7 @@ object CrashReporter {
                 }
             }
             File(context.cacheDir, "crashes").deleteRecursively()
+            File(context.cacheDir.parentFile, "files/last_crash.txt").delete()
         }
     }
 }
