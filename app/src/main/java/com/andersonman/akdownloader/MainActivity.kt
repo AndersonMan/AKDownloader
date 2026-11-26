@@ -7,6 +7,7 @@ import android.content.ClipboardManager
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -20,19 +21,38 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        requestNotificationPermissionIfNeeded()
-        showCrashReportIfNeeded()
-        enableEdgeToEdge()
-        setContent {
-            AKDownloaderTheme {
-                AKDownloaderApp()
+        try {
+            requestNotificationPermissionIfNeeded()
+            showCrashReportIfNeeded()
+            enableEdgeToEdge()
+            setContent {
+                AKDownloaderTheme {
+                    AKDownloaderApp()
+                }
             }
+        } catch (t: Throwable) {
+            showSurvivalError(t)
         }
     }
 
     override fun onResume() {
         super.onResume()
-        CrashReporter.install(this)
+        runCatching { CrashReporter.install(this) }
+    }
+
+    private fun showSurvivalError(t: Throwable) {
+        try {
+            val stack = android.util.Log.getStackTraceString(t).take(6000)
+            CrashReporter.saveCrash(this, t)
+            val messageView = TextView(this).apply {
+                text = "AKDownloader n'a pas pu démarrer.\n\n" + stack
+                setPadding(40, 40, 40, 40)
+                setTextIsSelectable(true)
+            }
+            setContentView(ScrollView(this).apply { addView(messageView) })
+        } catch (e: Throwable) {
+            Toast.makeText(this, "Erreur démarrage : " + t.message, Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun showCrashReportIfNeeded() {
