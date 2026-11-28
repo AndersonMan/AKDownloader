@@ -1,5 +1,8 @@
 package com.andersonman.akdownloader.ui.home
 
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -28,6 +32,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -42,6 +47,7 @@ fun HomeScreen(
     val analyzing by viewModel.analyzing
     val message by viewModel.message
     val results = viewModel.results
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -69,6 +75,21 @@ fun HomeScreen(
                 Spacer(Modifier.size(4.dp))
                 Text("Télécharger")
             }
+            OutlinedButton(onClick = {
+                val clipboard = context.getSystemService(ClipboardManager::class.java)
+                val pasted = clipboard?.primaryClip
+                    ?.takeIf { it.itemCount > 0 }
+                    ?.getItemAt(0)?.text?.toString().orEmpty().trim()
+                if (pasted.startsWith("http")) {
+                    viewModel.url.value = pasted
+                } else {
+                    Toast.makeText(context, "Aucun lien valide dans le presse-papiers", Toast.LENGTH_SHORT).show()
+                }
+            }) {
+                Icon(Icons.Filled.ContentPaste, contentDescription = null)
+                Spacer(Modifier.size(4.dp))
+                Text("Coller")
+            }
             OutlinedButton(onClick = { viewModel.analyze() }, enabled = url.isNotBlank() && !analyzing) {
                 Icon(Icons.Filled.Search, contentDescription = null)
                 Spacer(Modifier.size(4.dp))
@@ -93,7 +114,8 @@ fun HomeScreen(
     }
 }
 
-(item: MediaItem, onDownload: () -> Unit) {
+@Composable
+private fun MediaResultRow(item: MediaItem, onDownload: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(12.dp),

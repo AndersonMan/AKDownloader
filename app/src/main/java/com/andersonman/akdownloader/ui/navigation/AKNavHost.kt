@@ -14,6 +14,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -25,6 +26,7 @@ import com.andersonman.akdownloader.ui.downloads.DownloadsScreen
 import com.andersonman.akdownloader.ui.home.HomeScreen
 import com.andersonman.akdownloader.ui.library.LibraryScreen
 import com.andersonman.akdownloader.ui.player.PlayerScreen
+import com.andersonman.akdownloader.util.AppLinks
 
 enum class Tab(val label: String) {
     HOME("Accueil"),
@@ -37,6 +39,12 @@ enum class Tab(val label: String) {
 fun AKDownloaderApp() {
     var currentTab by rememberSaveable { mutableStateOf(Tab.HOME) }
     var playerMedia by remember { mutableStateOf<String?>(null) }
+
+    // Un lien partagé depuis une autre app ouvre le Navigateur dessus.
+    val pendingLink = AppLinks.pendingUrl
+    LaunchedEffect(pendingLink) {
+        if (pendingLink != null) currentTab = Tab.BROWSER
+    }
 
     val openInPlayer: (Uri) -> Unit = { uri -> playerMedia = uri.toString() }
 
@@ -69,7 +77,7 @@ fun AKDownloaderApp() {
         Box(modifier = Modifier.padding(padding)) {
             when (currentTab) {
                 Tab.HOME -> HomeScreen(onDownloadQueued = { currentTab = Tab.DOWNLOADS })
-                Tab.BROWSER -> BrowserScreen()
+                Tab.BROWSER -> BrowserScreen(pendingUrl = pendingLink)
                 Tab.DOWNLOADS -> DownloadsScreen(onPlay = openInPlayer)
                 Tab.LIBRARY -> LibraryScreen(onPlay = openInPlayer)
             }

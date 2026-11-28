@@ -21,6 +21,8 @@ class DownloadsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun cancel(context: Context, id: Long) = DownloadService.cancel(context, id)
 
+    fun pause(context: Context, id: Long) = DownloadService.pause(context, id)
+
     fun retry(context: Context, id: Long) = DownloadService.start(context, longArrayOf(id))
 
     fun delete(id: Long) {

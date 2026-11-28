@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
@@ -60,6 +61,7 @@ fun DownloadsScreen(
                 DownloadRow(
                     download = download,
                     onCancel = { viewModel.cancel(context, download.id) },
+                    onPause = { viewModel.pause(context, download.id) },
                     onRetry = { viewModel.retry(context, download.id) },
                     onDelete = { viewModel.delete(download.id) },
                     onPlay = { download.contentUri?.let { onPlay(Uri.parse(it)) } },
@@ -73,6 +75,7 @@ fun DownloadsScreen(
 private fun DownloadRow(
     download: DownloadEntity,
     onCancel: () -> Unit,
+    onPause: () -> Unit,
     onRetry: () -> Unit,
     onDelete: () -> Unit,
     onPlay: () -> Unit,
@@ -88,20 +91,37 @@ private fun DownloadRow(
                     )
                 }
                 when (download.status) {
-                    DownloadEntity.Status.RUNNING.name ->
+                    DownloadEntity.Status.RUNNING.name -> Row {
+                        IconButton(onClick = onPause) { Icon(Icons.Filled.Pause, contentDescription = "Mettre en pause") }
                         IconButton(onClick = onCancel) { Icon(Icons.Filled.Close, contentDescription = "Annuler") }
+                    }
                     DownloadEntity.Status.COMPLETED.name ->
                         IconButton(onClick = onPlay) { Icon(Icons.Filled.PlayArrow, contentDescription = "Lire") }
+                    DownloadEntity.Status.PAUSED.name ->
+                        IconButton(onClick = onRetry) { Icon(Icons.Filled.PlayArrow, contentDescription = "Reprendre") }
                     else -> {}
                 }
             }
 
-            if (download.status == DownloadEntity.Status.RUNNING.name && download.totalBytes > 0) {
+            if ((download.status == DownloadEntity.Status.RUNNING.name ||
+                    download.status == DownloadEntity.Status.PAUSED.name) && download.totalBytes > 0
+            ) {
                 val progress = (download.downloadedBytes.toFloat() / download.totalBytes.toFloat())
                 LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
             }
 
             when (download.status) {
+                DownloadEntity.Status.ENQUEUED.name ->
+                    Text("En attente…", style = MaterialTheme.typography.bodySmall)
+                DownloadEntity.Status.PAUSED.name ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "En pause · ${formatBytes(download.downloadedBytes)} sur ${formatBytes(download.totalBytes)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = onRetry) { Text("Reprendre") }
+                    }
                 DownloadEntity.Status.FAILED.name -> Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         "Échec : ${download.error ?: "erreur inconnue"}",

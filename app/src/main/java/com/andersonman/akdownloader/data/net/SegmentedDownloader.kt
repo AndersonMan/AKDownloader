@@ -13,7 +13,7 @@ import java.io.IOException
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
-import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicLongArray
 
 /**
  * Téléchargeur multi-connexions : découpe le fichier en segments
@@ -56,10 +56,18 @@ class SegmentedDownloader(
         }
     }
 
+    /**
+     * Télécharge [url] vers [target].
+     *
+     * @param offsets tableau partagé (octets déjà valides par segment) : le remplir
+     * avant l'appel permet de REPRENDRE un téléchargement interrompu ; il est mis
+     * à jour en continu pendant le téléchargement (utile pour la mise en pause).
+     */
     suspend fun download(
         url: String,
         target: RandomAccessFile,
         onProgress: (bytesRead: Long, totalBytes: Long) -> Unit,
+        offsets: AtomicLongArray? = null,
     ): DownloadResult = withContext(Dispatchers.IO) {
         val info = probe(url)
         val total = info.totalBytes
@@ -67,9 +75,19 @@ class SegmentedDownloader(
         if (total > 0) {
             target.setLength(total)
         }
-        val counter = AtomicLong()
+        val counters = offsets ?: AtomicLongArray(segmentCount)
+        val resumable = info.acceptsRanges && total > 0
+        if (!resumable) {
+            // Reprise impossible : tout repart de zéro.
+            for (i in 0 until counters.length()) counters.set(i, 0L)
+        }
+        fun totalRead(): Long {
+            var sum = 0L
+            for (i in 0 until counters.length()) sum += counters.get(i)
+            return sum
+        }
         coroutineScope {
-            if (info.acceptsRanges && total > MIN_SEGMENT_SIZE && segmentCount > 1) {
+            if (resumable && total > MIN_SEGMENT_SIZE && segmentCount > 1) {
                 val base = total / segmentCount
                 val remainder = total % segmentCount
                 var start = 0L
@@ -79,31 +97,39 @@ class SegmentedDownloader(
                     val segmentEnd = start + length - 1
                     start += length
                     async {
-                        downloadSegment(url, segmentStart, segmentEnd, channel, counter, total, onProgress)
+                        downloadSegment(url, index, segmentStart, segmentEnd, channel, counters, total, onProgress)
                     }
                 }.awaitAll()
             } else {
-                downloadSegment(url, 0L, if (total > 0) total - 1 else -1L, channel, counter, total, onProgress)
+                downloadSegment(url, 0, 0L, if (total > 0) total - 1 else -1L, channel, counters, total, onProgress)
             }
         }
         DownloadResult(
             contentType = info.contentType,
             suggestedName = info.suggestedName,
-            totalBytes = if (total > 0) total else counter.get(),
+            totalBytes = if (total > 0) total else totalRead(),
         )
     }
 
     private suspend fun downloadSegment(
         url: String,
+        index: Int,
         start: Long,
         endInclusive: Long,
         channel: FileChannel,
-        counter: AtomicLong,
+        offsets: AtomicLongArray,
         total: Long,
         onProgress: (Long, Long) -> Unit,
     ) {
         val segmentLength = if (endInclusive >= 0) endInclusive - start + 1 else -1L
-        var offset = 0L
+        val resumeAt = if (segmentLength > 0) offsets.get(index).coerceIn(0L, segmentLength) else 0L
+        if (segmentLength in 1..resumeAt) return // segment déjà complété avant la pause
+        fun progress(): Long {
+            var sum = 0L
+            for (i in 0 until offsets.length()) sum += offsets.get(i)
+            return sum
+        }
+        var offset = resumeAt
         var lastError: Exception? = null
         repeat(MAX_ATTEMPTS) {
             try {
@@ -126,16 +152,18 @@ class SegmentedDownloader(
                         if (read == -1) break
                         channel.write(ByteBuffer.wrap(buffer, 0, read), start + offset)
                         offset += read
-                        onProgress(counter.addAndGet(read.toLong()), total)
+                        offsets.set(index, offset)
+                        onProgress(progress(), total)
                     }
                 }
                 if (segmentLength >= 0 && offset < segmentLength) {
                     throw IOException("Segment incomplet : $offset / $segmentLength")
                 }
+                if (segmentLength > 0) offsets.set(index, segmentLength)
                 return
             } catch (e: IOException) {
-                counter.addAndGet(-offset)
-                offset = 0L
+                offsets.set(index, resumeAt)
+                offset = resumeAt
                 lastError = e
             }
         }
