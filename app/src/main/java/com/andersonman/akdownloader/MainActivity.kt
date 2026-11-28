@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -16,11 +17,13 @@ import androidx.activity.enableEdgeToEdge
 import com.andersonman.akdownloader.ui.crash.CrashReporter
 import com.andersonman.akdownloader.ui.navigation.AKDownloaderApp
 import com.andersonman.akdownloader.ui.theme.AKDownloaderTheme
+import com.andersonman.akdownloader.util.AppLinks
 
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleSendIntent(intent)
         try {
             requestNotificationPermissionIfNeeded()
             showCrashReportIfNeeded()
@@ -33,6 +36,20 @@ class MainActivity : ComponentActivity() {
         } catch (t: Throwable) {
             showSurvivalError(t)
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleSendIntent(intent)
+    }
+
+    /** Lien partagé depuis une autre application ("Partager vers AKDownloader"). */
+    private fun handleSendIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_SEND) return
+        if (intent.type != "text/plain") return
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
+        val url = text.split(" ", "\n").firstOrNull { it.startsWith("http") } ?: text
+        if (url.startsWith("http")) AppLinks.pendingUrl = url
     }
 
     override fun onResume() {

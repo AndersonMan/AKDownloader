@@ -1,19 +1,21 @@
 package com.andersonman.akdownloader.ui.browser
 
 import android.annotation.SuppressLint
+import android.content.Intent
+import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -30,9 +32,11 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -54,7 +58,7 @@ private const val DETECT_SCRIPT = """
             }
         }
         var html = document.documentElement.innerHTML;
-        var regex = /https?:\/\/[^\"'\\ <>\ ]+?\.(mp3|m4a|flac|ogg|wav|mp4|mkv|webm|m3u8|mpd)(\?[^\"'\\ <>\ ]*)?/gi;
+        var regex = /https?:\/\/[^\"'\\ <> ]+?\.(mp3|m4a|flac|ogg|wav|mp4|mkv|webm|m3u8|mpd)(\?[^\"'\\ <> ]*)?/gi;
         var match;
         while ((match = regex.exec(html)) !== null) { found[match[0]] = true; }
         return JSON.stringify(Object.keys(found));
@@ -63,7 +67,7 @@ private const val DETECT_SCRIPT = """
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
+fun BrowserScreen(viewModel: BrowserViewModel = viewModel(), pendingUrl: String? = null) {
     val context = LocalContext.current
     val detected by viewModel.detected.collectAsState()
     val address by viewModel.currentAddress
@@ -73,10 +77,35 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.loadWithOverviewMode = true
+            settings.mediaPlaybackRequiresUserGesture = false
+
+            // Cookies : indispensables pour que les connexions (login) fonctionnent.
+            val cookieManager = CookieManager.getInstance()
+            cookieManager.setAcceptCookie(true)
+            cookieManager.setAcceptThirdPartyCookies(this, true)
+
+            // Se presenter comme un navigateur complet (Chrome) et non comme un WebView :
+            // beaucoup de sites refusent la connexion depuis un WebView integre ("; wv").
+            settings.userAgentString =
+                WebSettings.getDefaultUserAgent(context).replace("; wv)", ")")
+
             webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                     viewModel.onResource(request.url.toString())
                     return null
+                }
+
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                    val scheme = request.url.scheme?.lowercase() ?: return false
+                    // http/https restent dans le navigateur integre ;
+                    // les autres schemas (mailto:, intent:, apps...) passent au systeme.
+                    if (scheme == "http" || scheme == "https") return false
+                    return try {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, request.url))
+                        true
+                    } catch (t: Throwable) {
+                        true
+                    }
                 }
 
                 override fun onPageFinished(view: WebView, url: String?) {
@@ -86,6 +115,20 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
             }
             webChromeClient = WebChromeClient()
             loadUrl("https://www.google.com")
+        }
+    }
+
+    // Ouvrir un lien partage depuis une autre application (bouton "Partager" d'Android).
+    LaunchedEffect(pendingUrl) {
+        pendingUrl?.takeIf { it.isNotBlank() }?.let { webView.loadUrl(it) }
+    }
+
+    // Enregistrer les cookies et liberer le WebView quand on quitte l'onglet.
+    DisposableEffect(Unit) {
+        onDispose {
+            runCatching { CookieManager.getInstance().flush() }
+            runCatching { webView.stopLoading() }
+            runCatching { webView.destroy() }
         }
     }
 
