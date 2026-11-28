@@ -17,5 +17,5 @@ data class DownloadEntity(
     val completedAt: Long? = null,
     val contentUri: String? = null,
 ) {
-    enum class Status { ENQUEUED, RUNNING, COMPLETED, FAILED, CANCELLED }
+    enum class Status { ENQUEUED, RUNNING, PAUSED, COMPLETED, FAILED, CANCELLED }
 }
